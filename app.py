@@ -48,6 +48,26 @@ def save_query_history(query, response):
     with open(query_history_file, "w") as f:
         json.dump(history, f, indent=4)
 
+def precompute_analytics():
+    analytics_data = {}
+
+    df["year_month"] = pd.to_datetime(df["arrival_date"]).dt.to_period("M")
+    revenue_trends = df.groupby("year_month")["adr"].sum().to_dict()
+    analytics_data["revenue_trends"] = revenue_trends
+
+    analytics_data["cancellation_rate"] = round(df["is_canceled"].mean() * 100, 2)
+
+    analytics_data["top_countries"] = df["country"].value_counts().head(5).to_dict()
+
+    analytics_data["lead_time_avg"] = round(df["lead_time"].mean(), 2)
+
+    with open("analytics_cache.json", "w") as f:
+        json.dump(analytics_data, f, indent=4)
+
+    print("Precomputed analytics stored successfully!")
+
+precompute_analytics()
+
 app = Flask(__name__)
 
 @app.route('/')
@@ -76,52 +96,13 @@ def ask():
 
 @app.route("/analytics", methods=["POST"])
 def analytics():
-    start_time = time.time()  
+    with open("analytics_cache.json", "r") as f:
+        analytics_data = json.load(f)
 
-    try:
-        data = request.json
-        analysis_type = data.get("type", "")
+    data = request.json
+    analysis_type = data.get("type", "")
 
-        if analysis_type == "revenue_trends":
-            df["year_month"] = pd.to_datetime(df["arrival_date"]).dt.to_period("M")
-            monthly_revenue = df.groupby("year_month")["adr"].sum()
-
-            plt.figure(figsize=(8, 4))
-            monthly_revenue.plot(kind="line", marker="o", color="b")
-            plt.title("Revenue Trends Over Time")
-            plt.xlabel("Month")
-            plt.ylabel("Total Revenue")
-            plt.grid(True)
-
-            img = io.BytesIO()
-            plt.savefig(img, format="png")
-            img.seek(0)
-            plot_url = base64.b64encode(img.getvalue()).decode()
-            plt.close()
-
-            response = {"analysis": "revenue_trends", "plot": plot_url}
-
-        elif analysis_type == "cancellation_rate":
-            cancellation_rate = df["is_canceled"].mean() * 100
-            response = {"analysis": "cancellation_rate", "rate": f"{cancellation_rate:.2f}%"}
-
-        elif analysis_type == "top_countries":
-            country_counts = df["country"].value_counts().head(5).to_dict()
-            response = {"analysis": "top_countries", "countries": country_counts}
-
-        elif analysis_type == "lead_time_distribution":
-            lead_time_avg = df["lead_time"].mean()
-            response = {"analysis": "lead_time_distribution", "average_lead_time": round(lead_time_avg, 2)}
-
-        else:
-            response = {"error": "Invalid analysis type"}
-
-    except Exception as e:
-        response = {"error": str(e)}
-
-    end_time = time.time()  
-    response["response_time"] = f"{(end_time - start_time):.3f} seconds"  
-    return jsonify(response)
+    return jsonify({analysis_type: analytics_data.get(analysis_type, "Invalid type")})
 
 if __name__ == "__main__":
     app.run(debug=True)
